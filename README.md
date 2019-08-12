@@ -1,5 +1,5 @@
-# smpp-smsc-simulator
-SMPP SMSC Simulator
+# SMPP SMSC Simulator
+smpp-smsc-simulator
 
 This code is used as part of the Melrose Labs SMPP SMSC Simulator service found at https://melroselabs.com/services/smsc-simulator/.
 
