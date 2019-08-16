@@ -16,3 +16,9 @@ Run
 The SMSC will listen for connections on port 2775.
 
 If you wish to use TLS with the SMSC simulator, then you should put an AWS load balancer in front of the server on which you run the simulator or use openssl to bridge to the SMSC simulator.
+
+References
+==========
+
+Melrose Labs SMPP SMSC Simulator - https://melroselabs.com/services/smsc-simulator/
+SMPP protocol - https://smpp.org
