@@ -1,7 +1,7 @@
 # SMPP SMSC Simulator
 smpp-smsc-simulator
 
-This code is used as part of the Melrose Labs SMPP SMSC Simulator service found at https://melroselabs.com/services/smsc-simulator/.
+This code is used as part of the Melrose Labs <a href="https://melroselabs.com/services/smsc-simulator/">SMPP SMSC Simulator</a> service.  The SMSC simulator is used to test an SMS application's support for the <a href="https://smpp.org">SMPP</a> protocol.
 
 Build
 =====
