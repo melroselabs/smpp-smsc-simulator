@@ -1000,45 +1000,9 @@ long dolisten( int portno )
 }
 
 SMPPSession* sessionSockMap[32000]; // array of SMPP session by socket
-//map<string,int> sockSessionMap; // maps SMPP system ID to socket (maps indirectly to SMPPSession object)
 
 int main(int argc, const char * argv[])
 {
-    /*
-    MessageDeliverer d;
-    MessageDeliverer::Message msg;
-    
-    uint64_t t;
-    
-    t = currentUSecsSinceEpoch();
-    d.add(t, MessageDeliverer::Message("a0"));
-    d.add(t, MessageDeliverer::Message("a1"));
-    d.add(t, MessageDeliverer::Message("a2"));
-    sleep(1);cout<<endl;
-    
-    d.add(currentUSecsSinceEpoch(), MessageDeliverer::Message("a"));
-    d.add(currentUSecsSinceEpoch(), MessageDeliverer::Message("b"));
-    d.add(currentUSecsSinceEpoch(), MessageDeliverer::Message("c"));
-    sleep(1);cout<<endl;
-    d.add(currentUSecsSinceEpoch(), MessageDeliverer::Message("A"));
-    sleep(1);cout<<endl;
-    d.add(currentUSecsSinceEpoch(), MessageDeliverer::Message("B"));
-    sleep(1);cout<<endl;
-    d.add(currentUSecsSinceEpoch(), MessageDeliverer::Message("C"));
-    sleep(1);cout<<endl;
-    
-    while(true)
-    {
-        MessageDeliverer::Message m;
-        d.get(m);
-        sleep(1);
-    }
-    
-    return 0;
-    */
-    
-    //
-    
     printf("%s build time: %s %s\n",argv[0],__DATE__,__TIME__);
     
     if (!dolisten(2775)) {
