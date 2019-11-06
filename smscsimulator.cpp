@@ -1,5 +1,5 @@
 //
-//  main.cpp
+//  smscsimulator.cpp
 //  SMPPLib
 //
 //  Created by Mark Hay on 12/05/2019.
@@ -45,13 +45,9 @@ uint64_t currentUSecsSinceEpoch( void )
 
 class ClientConfig {
 private:
-    ClientConfig() {
-        
-    }
+    ClientConfig() {}
     
-    ~ClientConfig() {
-        
-    }
+    ~ClientConfig() {}
     
 public:
     
@@ -118,12 +114,8 @@ private:
     MessageQueue mq;
     
 public:
-    MessageDeliverer() {
-        
-    }
-    ~MessageDeliverer() {
-        
-    }
+    MessageDeliverer() {}
+    ~MessageDeliverer() {}
     
     void add(uint64_t timeDeliver, Message msg) {
         
@@ -184,7 +176,7 @@ public:
     virtual long bytes_to_read( void ) = 0;
 };
 
-class SMPPSocketEncrypted : public SMPPSocket {
+/*class SMPPSocketEncrypted : public SMPPSocket {
 private:
     uint8_t buf[47*2] = {
         0x00, 0x00, 0x00, 0x2f, // length including this length parameter
@@ -225,10 +217,11 @@ public:
     }
     void recv( void ) {}
     bool send( uint8_t*, int len ) { return false; }
-};
+};*/
 
 class SMPPSocketUnencrypted : public SMPPSocket {
 private:
+    /*
     uint8_t buf[47*2] = {
         0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
         0x53, 0x4d, 0x50, 0x50, 0x33, 0x54, 0x45, 0x53, 0x54, 0x00, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74,
@@ -243,6 +236,7 @@ private:
     };
     int idx = 0;
     int len = sizeof(buf);
+     */
     
 public:
     SMPPSocketUnencrypted() {
@@ -366,7 +360,6 @@ public:
     
     const char* cmdString(uint64_t id) {
         for(int i=0;i<34;i++) {
-            //printf("0x%08x %s\n",cmdStrings[i].cmdid,cmdStrings[i].name);
             if ( cmdStrings[i].cmdid == id ) return cmdStrings[i].name;
         }
         return "";
@@ -448,13 +441,11 @@ public:
     
     void allocateSocket( void )
     {
-        //socket = new SMPPSocketEncrypted;
         socket = new SMPPSocketUnencrypted;
     }
 
     void allocateSocket( int fdsocket )
     {
-        //socket = new SMPPSocketEncrypted;
         socket = new SMPPSocketUnencrypted(fdsocket);
     }
     
@@ -502,9 +493,6 @@ public:
         {
             // don't have any of the header yet
             
-            //if ( socket->bytes_to_read() < 16 ) return false;
-                // check we have enough bytes in buffer to read complete header (16 bytes)
-        
             try {
                 command_received_header.command_length = getInteger();
                 command_received_header.command_id = getInteger();
@@ -529,9 +517,6 @@ public:
 
         if ( body_length > 0 )
         {
-            //if ( socket->bytes_to_read() < body_length ) return false;
-                // check we have enough bytes in buffer to read complete body (body_length)
-            
             try {
                 getBytes(body_length,command_received_body.body);
             }
@@ -560,7 +545,42 @@ public:
     uint64_t pduSequenceNo( void ) { return command_received_header.sequence_number; }
 };
 
-class SMPPSession
+class Session
+{
+protected:
+    int sessionType;
+    
+public:
+    Session() {}
+    virtual ~Session() {}
+    
+    virtual bool timedCheck( void ) = 0;
+    virtual bool run( void ) = 0;
+};
+
+class AdminSession : public Session
+{
+public:
+    AdminSession() { sessionType = 0; }
+    AdminSession(int fdsocket)
+    {
+        //conn.allocateSocket(fdsocket);
+    }
+    ~AdminSession() {}
+    
+    bool timedCheck( void )
+    {
+        // return true if to close
+        return true;
+    }
+    
+    bool run( void )
+    {
+        return true;
+    }
+};
+
+class SMPPSession : public Session
 {
 private:
     SMPPConnection conn;
@@ -586,6 +606,8 @@ public:
 public:
     SMPPSession()
     {
+        sessionType = 1;
+        
         bindState = BS_NONE;
         version = 0x00;
     }
@@ -597,10 +619,7 @@ public:
         conn.allocateSocket(fdsocket);
     }
     
-    ~SMPPSession()
-    {
-        
-    }
+    ~SMPPSession() {}
     
     void setDebug( bool val )
     {
@@ -625,7 +644,7 @@ public:
     
     bool timedCheck( void )
     {
-        // return true if closed
+        // return true if to close
         
         uint64_t now = currentUSecsSinceEpoch();
         
@@ -722,7 +741,7 @@ public:
                 // receipted_message_id TLV
                 0x00, 0x1e, // tag
                 0x00, 0x41, // length
-                // .. append message_id
+                // .. message_id (to be appended)
             };
             
             memcpy(sbuf+sidx,params1,sizeof(params1));
@@ -750,11 +769,10 @@ public:
         uint64_t cmdid,seqno;
         uint8_t sbuf[1024];
         
-        SMPP b;
-        
         if (recv(cmdid,seqno))
         {
-            printf("<< 0x%08llx %s\n",cmdid,b.cmdString(cmdid));
+            //SMPP b;
+            //printf("<< 0x%08llx %s\n",cmdid,b.cmdString(cmdid));
             
             lastPDUFromESMETime = now;
             
@@ -918,16 +936,20 @@ public:
 
     bool recv( uint64_t& cmdID, uint64_t& seqNo )
     {
-        printf("this=%p\n",this);
+        //printf("this=%p\n",this);
+        
         bool ret = conn.get();
-        if (ret) { cmdID = conn.pduCommandID(); seqNo  = conn.pduSequenceNo(); }
+        if (ret) { cmdID = conn.pduCommandID(); seqNo  = conn.pduSequenceNo();
+            SMPP b;
+            printf(">> 0x%08llx %s\n",cmdID,b.cmdString(cmdID));
+        }
         return ret;
     }
     
     bool send( uint64_t seqNo, uint64_t cmdID, uint64_t cmdStatus, uint8_t* param, int len )
     {
         SMPP b;
-        printf(">> 0x%08llx %s\n",cmdID,b.cmdString(cmdID));
+        printf("<< 0x%08llx %s\n",cmdID,b.cmdString(cmdID));
         
         return conn.put(seqNo, cmdID, cmdStatus, param, len);
     }
@@ -935,18 +957,16 @@ public:
 
 // Sockets reference: https://www.ibm.com/support/knowledgecenter/ssw_ibm_i_74/rzab6/xnonblock.htm
 
-int listensockfd;
-
-long dolisten( int portno )
+int dolisten( int portno )
 {
     struct sockaddr_in serv_addr;
     
     /* First call to socket() function */
-    listensockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int listensockfd = socket(AF_INET, SOCK_STREAM, 0);
     
     if (listensockfd < 0) {
         perror("ERROR opening socket");
-        return false;
+        return -1;
     }
     
     int rc, on = 1;
@@ -986,7 +1006,7 @@ long dolisten( int portno )
     /* Now bind the host address using bind() call.*/
     if (::bind(listensockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
         perror("ERROR on binding");
-        return false;
+        return -1;
     }
     
     /* Now start listening for the clients, here
@@ -996,30 +1016,48 @@ long dolisten( int portno )
     
     listen(listensockfd,32);
     
-    return true;
+    return listensockfd;
 }
 
-SMPPSession* sessionSockMap[32000]; // array of SMPP session by socket
+Session* sessionSockMap[32000]; // array of SMPP session by socket
 
 int main(int argc, const char * argv[])
 {
     printf("%s build time: %s %s\n",argv[0],__DATE__,__TIME__);
     
-    if (!dolisten(2775)) {
-        perror("Failed to listen on port 2775");
+    //
+    
+    int portSMPP = 2775;
+    
+    int listensockfdSMPP = dolisten(portSMPP);
+    
+    if (listensockfdSMPP==-1) {
+        perror("Failed to listen on SMPP port");
         exit(1);
     }
     
-    std::cout << "Listening on port 2775" << std::endl;
+    std::cout << "Listening for SMPP on port " << portSMPP << std::endl;
     
-    /*************************************************************/
-    /* Initialize the master fd_set                              */
-    /*************************************************************/
-    fd_set master_set, working_set;
+    //
+    
+    int portAdmin = 8775;
 
+    int listensockfdAdmin = dolisten(portAdmin);
+    
+    if (listensockfdAdmin==-1) {
+        perror("Failed to listen on admin port");
+        exit(1);
+    }
+    
+    std::cout << "Listening for admin on port " << portAdmin << std::endl;
+    
+    // Initialize the master fd_set
+    fd_set master_set, working_set;
     FD_ZERO(&master_set);
-    int max_sd = listensockfd;
-    FD_SET(listensockfd, &master_set);
+    int max_sd = listensockfdSMPP;
+    FD_SET(listensockfdSMPP, &master_set);
+    if ( listensockfdAdmin > max_sd ) max_sd = listensockfdAdmin;
+    FD_SET(listensockfdAdmin, &master_set);
     
     //
     
@@ -1029,46 +1067,30 @@ int main(int argc, const char * argv[])
     int close_conn;
     struct timeval timeout;
     
-    /*************************************************************/
-    /* Loop waiting for incoming connects or for incoming data   */
-    /* on any of the connected sockets.                          */
-    /*************************************************************/
+    // Loop waiting for incoming connects or for incoming data
     do
     {
-        /**********************************************************/
-        /* Copy the master fd_set over to the working fd_set.     */
-        /**********************************************************/
+        // Copy the master fd_set over to the working fd_set.
         memcpy(&working_set, &master_set, sizeof(master_set));
         
-        /*************************************************************/
-        /* Initialize the timeval struct to 1 second.  If no        */
-        /* activity after 1 second then wake-up and cycle.          */
-        /*************************************************************/
+        // Initialize the timeval struct to 1 second.  If no
+        // activity after 1 second then wake-up and cycle.
         timeout.tv_sec  = 1;
         timeout.tv_usec = 0;
 
-        /**********************************************************/
-        /* Call select() and wait for it to complete.   */
-        /**********************************************************/
-        //printf("Waiting on select()...\n");
+        // Call select() and wait for it to complete.
         rc = select(max_sd + 1, &working_set, NULL, NULL, &timeout);
         
-        /**********************************************************/
-        /* Check to see if the select call failed.                */
-        /**********************************************************/
+        // Check to see if the select call failed.
         if (rc < 0)
         {
             perror("  select() failed");
             break;
         }
         
-        /**********************************************************/
-        /* Check to see if select call timed out.         */
-        /**********************************************************/
+        // Check to see if select call timed out.
         if (rc == 0)
         {
-            //printf("  %ld select() timed out.\n",time(NULL));
-            
             // perform periodic session tasks
             
             for (i=0; i <= max_sd; ++i)
@@ -1084,22 +1106,21 @@ int main(int argc, const char * argv[])
                             sessionSockMap[i] = NULL;
                         }
 
-                        /*************************************************/
-                        /* If the close_conn flag was turned on, we need */
-                        /* to clean up this active connection.  This     */
-                        /* clean up process includes removing the        */
-                        /* descriptor from the master set and            */
-                        /* determining the new maximum descriptor value  */
-                        /* based on the bits that are still turned on in */
-                        /* the master set.                               */
-                        /*************************************************/
+                        /*
+                         If the close_conn flag was turned on, we need
+                         to clean up this active connection.  This
+                         clean up process includes removing the
+                         descriptor from the master set and
+                         determining the new maximum descriptor value
+                         based on the bits that are still turned on in
+                         the master set.
+                        */
 
                         close(i);
                         FD_CLR(i, &master_set);
                         if (i == max_sd)
                         {
-                            while (FD_ISSET(max_sd, &master_set) == FALSE)
-                                max_sd -= 1;
+                            while (FD_ISSET(max_sd, &master_set) == FALSE) { max_sd -= 1; }
                         }
                     }
             }
@@ -1128,12 +1149,13 @@ int main(int argc, const char * argv[])
                 /****************************************************/
                 desc_ready -= 1;
                 
-                /****************************************************/
-                /* Check to see if this is the listening socket     */
-                /****************************************************/
-                if (i == listensockfd)
+                /***********************************************************/
+                /* Check to see if this is the listening socket (SMPP)     */
+                /***********************************************************/
+                if (i == listensockfdSMPP)
                 {
-                    printf("  Listening socket is readable\n");
+                    //printf("  Listening socket (SMPP) is readable\n");
+                    
                     /*************************************************/
                     /* Accept all incoming connections that are      */
                     /* queued up on the listening socket before we   */
@@ -1148,7 +1170,7 @@ int main(int argc, const char * argv[])
                         /* failure on accept will cause us to end the */
                         /* server.                                    */
                         /**********************************************/
-                        new_sd = accept(listensockfd, NULL, NULL);
+                        new_sd = accept(listensockfdSMPP, NULL, NULL);
                         if (new_sd < 0)
                         {
                             if (errno != EWOULDBLOCK)
@@ -1169,7 +1191,7 @@ int main(int argc, const char * argv[])
                         /* Add the new incoming connection to the     */
                         /* master read set                            */
                         /**********************************************/
-                        printf("  New incoming connection - %d\n", new_sd);
+                        //printf("  New incoming connection - %d\n", new_sd);
                         FD_SET(new_sd, &master_set);
                         if (new_sd > max_sd)
                             max_sd = new_sd;
@@ -1180,7 +1202,60 @@ int main(int argc, const char * argv[])
                         /**********************************************/
                     } while (new_sd != -1);
                 }
-                
+                else
+                /***********************************************************/
+                /* Check to see if this is the listening socket (admin)    */
+                /***********************************************************/
+                if (i == listensockfdAdmin)
+                {
+                    //printf("  Listening socket (admin) is readable\n");
+                    /*************************************************/
+                    /* Accept all incoming connections that are      */
+                    /* queued up on the listening socket before we   */
+                    /* loop back and call select again.              */
+                    /*************************************************/
+                    do
+                    {
+                        /**********************************************/
+                        /* Accept each incoming connection.  If       */
+                        /* accept fails with EWOULDBLOCK, then we     */
+                        /* have accepted all of them.  Any other      */
+                        /* failure on accept will cause us to end the */
+                        /* server.                                    */
+                        /**********************************************/
+                        new_sd = accept(listensockfdAdmin, NULL, NULL);
+                        if (new_sd < 0)
+                        {
+                            if (errno != EWOULDBLOCK)
+                            {
+                                perror("  accept() failed");
+                                if (errno != EMFILE) end_server = TRUE;
+                            }
+                            break;
+                        }
+                        
+                        //
+                        
+                        AdminSession* newsession = new AdminSession(new_sd);
+                        
+                        sessionSockMap[new_sd] = newsession;
+                        
+                        /**********************************************/
+                        /* Add the new incoming connection to the     */
+                        /* master read set                            */
+                        /**********************************************/
+                        //printf("  New incoming connection (Admin) - %d\n", new_sd);
+                        FD_SET(new_sd, &master_set);
+                        if (new_sd > max_sd)
+                            max_sd = new_sd;
+                        
+                        /**********************************************/
+                        /* Loop back up and accept another incoming   */
+                        /* connection                                 */
+                        /**********************************************/
+                    } while (new_sd != -1);
+                }
+            
                 /****************************************************/
                 /* This is not the listening socket, therefore an   */
                 /* existing connection must be readable             */
@@ -1194,7 +1269,7 @@ int main(int argc, const char * argv[])
                     
                     if (closed)
                     {
-                        printf("  Closing connection - %d\n", i);
+                        //printf("  Closing connection - %d\n", i);
                         
                         if ( sessionSockMap[i] != NULL )
                         {
@@ -1233,9 +1308,11 @@ int main(int argc, const char * argv[])
     
     //
     
-    close(listensockfd);
+    close(listensockfdSMPP);
     
-    std::cout << "No longer listening on port 2775" << std::endl;
+    close(listensockfdAdmin);
+    
+    std::cout << "No longer listening on port " << portSMPP << std::endl;
     
     return 0;
 }
