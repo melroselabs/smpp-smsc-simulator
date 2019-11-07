@@ -28,9 +28,15 @@ using namespace std;
 
 #include <netdb.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #define TRUE  (1==1)
 #define FALSE (!TRUE)
+
+//
+
+uint64_t session_id_next = 0; // ID for each session
 
 // General
 
@@ -176,67 +182,8 @@ public:
     virtual long bytes_to_read( void ) = 0;
 };
 
-/*class SMPPSocketEncrypted : public SMPPSocket {
-private:
-    uint8_t buf[47*2] = {
-        0x00, 0x00, 0x00, 0x2f, // length including this length parameter
-        0x00, 0x00, 0x00, 0x02,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x01,
-        0x53, 0x4d, 0x50, 0x50, 0x33, 0x54, 0x45, 0x53, 0x54, 0x00, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74,
-        0x30, 0x38, 0x00, 0x53, 0x55, 0x42, 0x4d, 0x49, 0x54, 0x31, 0x00, 0x50, 0x01, 0x01, 0x00,
-
-        0x00, 0x00, 0x00, 0x2f, // length including this length parameter
-        0x80, 0x00, 0x00, 0x02,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x01,
-        0x53, 0x4d, 0x50, 0x50, 0x33, 0x54, 0x45, 0x53, 0x54, 0x00, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74,
-        0x30, 0x38, 0x00, 0x53, 0x55, 0x42, 0x4d, 0x49, 0x54, 0x31, 0x00, 0x50, 0x01, 0x01, 0x00
-    };
-    int idx = 0;
-    int len = sizeof(buf);
-    
-public:
-    SMPPSocketEncrypted() {
-        
-    }
-    SMPPSocketEncrypted(int socket) {
-        
-    }
-    ~SMPPSocketEncrypted() {}
-    
-    long bytes_to_read( void )
-    {
-        return len - idx;
-    }
-    
-    bool recvA( uint8_t& oct ) {
-        oct = buf[idx++];
-        if ( idx == len ) idx = 0;
-        return true;
-    }
-    void recv( void ) {}
-    bool send( uint8_t*, int len ) { return false; }
-};*/
-
 class SMPPSocketUnencrypted : public SMPPSocket {
 private:
-    /*
-    uint8_t buf[47*2] = {
-        0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-        0x53, 0x4d, 0x50, 0x50, 0x33, 0x54, 0x45, 0x53, 0x54, 0x00, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74,
-        0x30, 0x38, 0x00, 0x53, 0x55, 0x42, 0x4d, 0x49, 0x54, 0x31, 0x00, 0x50, 0x01, 0x01, 0x00,
-
-        0x00, 0x00, 0x00, 0x2f, // length including this length parameter
-        0x80, 0x00, 0x00, 0x02,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x01,
-        0x53, 0x4d, 0x50, 0x50, 0x33, 0x54, 0x45, 0x53, 0x54, 0x00, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74,
-        0x30, 0x38, 0x00, 0x53, 0x55, 0x42, 0x4d, 0x49, 0x54, 0x31, 0x00, 0x50, 0x01, 0x01, 0x00
-    };
-    int idx = 0;
-    int len = sizeof(buf);
-     */
     
 public:
     SMPPSocketUnencrypted() {
@@ -250,13 +197,12 @@ public:
     long bytes_to_read( void )
     {
         long count = 0;
-        int ret = ioctl((int)socket, FIONREAD, &count);
-        //std::cout << time(NULL) << " ioctl ret=" << ret << " count=" << count << std::endl;
+        ioctl((int)socket, FIONREAD, &count);
         return count;
     }
     
     bool recvA( uint8_t& oct ) {
-        int n = ::recv(socket,(void*)&oct,1,0);
+        int n = (int)::recv(socket,(void*)&oct,1,0);
         return (n>0);
     }
     void recv( void ) {}
@@ -318,7 +264,7 @@ public:
         static const uint64_t CancelBroadcastSMResp = 0x80000113;
     };
     
-    typedef struct { uint64_t cmdid; char* name; } CmdStrings;
+    typedef struct { uint64_t cmdid; const char* name; } CmdStrings;
     
     #define CMDEXP(A) CmdID::A, #A
     
@@ -379,6 +325,8 @@ private:
     
     SMPPSocket* socket = NULL;
     
+    char ip[64];
+    
     typedef enum { PV_INVALID, PV_LENGTH, PV_ALL } PDUValidity;
     
     typedef struct {
@@ -428,6 +376,7 @@ public:
         socket = NULL;
         command_received_header.valid = PV_INVALID;
         command_received_body.body = new uint8_t[max_command_body_length];
+        ip[0] = '\0';
     }
     
     ~SMPPConnection()
@@ -448,6 +397,14 @@ public:
     {
         socket = new SMPPSocketUnencrypted(fdsocket);
     }
+    
+    void setIP( char* ip_in )
+    {
+        if (ip_in != NULL) strcpy(ip,ip_in);
+        else strcpy(ip,"");
+    }
+    
+    char* getIP() { return ip; }
     
     uint64_t endian( uint64_t a) {
         uint64_t b;
@@ -477,7 +434,7 @@ public:
     
     uint8_t* getBodyPointer(int& len)
     {
-        len = command_received_header.command_length-16;
+        len = (int)(command_received_header.command_length-16);
         return command_received_body.body;
     }
     
@@ -585,6 +542,8 @@ class SMPPSession : public Session
 private:
     SMPPConnection conn;
     
+    uint64_t session_id;
+    
     // session state
     string system_id;
     string system_type;
@@ -610,16 +569,25 @@ public:
         
         bindState = BS_NONE;
         version = 0x00;
+        
+        session_id = session_id_next++;
     }
     
-    SMPPSession(int fdsocket)
+    SMPPSession(int fdsocket,char* ip)
     {
         bindState = BS_NONE;
         version = 0x00;
         conn.allocateSocket(fdsocket);
+        conn.setIP(ip);
+        
+        session_id = session_id_next++;
     }
     
-    ~SMPPSession() {}
+    ~SMPPSession() {
+        if (bindState != BS_NONE) {
+            logCommand("session aborted", "--");
+        }
+    }
     
     void setDebug( bool val )
     {
@@ -805,6 +773,8 @@ public:
                     
                     if (allowBind)
                     {
+                        system_id = esme_system_id;
+                        
                         char smsc_system_id[] = "MelroseLabsSMSC";
                         memcpy(sbuf,smsc_system_id,strlen(smsc_system_id)+1);
                         
@@ -933,23 +903,45 @@ public:
     
     uint8_t getVersion(void) { return version; }
     void setVersion(uint8_t version_in) { version = version_in; }
+    
+    void logCommand(uint64_t cmdID,const char* direction)
+    {
+        char buf[640];
+        SMPP b;
+        sprintf(buf,"0x%08llx %s",cmdID,b.cmdString(cmdID));
+        logCommand(buf,direction);
+    }
 
+    void logCommand(char* logline,const char* direction)
+    {
+        time_t rawtime;
+        struct tm * timeinfo;
+        char buffer [80];
+
+        time (&rawtime);
+        timeinfo = localtime (&rawtime);
+
+        strftime (buffer,80,"%F %X ",timeinfo);
+        
+        printf("%s %s [s%06llx:%-15s] %s\n",buffer,direction,session_id,conn.getIP(),logline);
+    }
+    
     bool recv( uint64_t& cmdID, uint64_t& seqNo )
     {
         //printf("this=%p\n",this);
         
         bool ret = conn.get();
         if (ret) { cmdID = conn.pduCommandID(); seqNo  = conn.pduSequenceNo();
-            SMPP b;
-            printf(">> 0x%08llx %s\n",cmdID,b.cmdString(cmdID));
+            logCommand(cmdID,">>");
         }
         return ret;
     }
     
     bool send( uint64_t seqNo, uint64_t cmdID, uint64_t cmdStatus, uint8_t* param, int len )
     {
-        SMPP b;
-        printf("<< 0x%08llx %s\n",cmdID,b.cmdString(cmdID));
+        //SMPP b;
+        //printf("<< 0x%08llx %s\n",cmdID,b.cmdString(cmdID));
+        logCommand(cmdID,"<<");
         
         return conn.put(seqNo, cmdID, cmdStatus, param, len);
     }
@@ -1170,7 +1162,9 @@ int main(int argc, const char * argv[])
                         /* failure on accept will cause us to end the */
                         /* server.                                    */
                         /**********************************************/
-                        new_sd = accept(listensockfdSMPP, NULL, NULL);
+                        struct sockaddr_in client_addr;
+                        int clen = sizeof(sockaddr_in);
+                        new_sd = accept(listensockfdSMPP, (struct sockaddr *)&client_addr, (socklen_t*) &clen);
                         if (new_sd < 0)
                         {
                             if (errno != EWOULDBLOCK)
@@ -1181,9 +1175,11 @@ int main(int argc, const char * argv[])
                             break;
                         }
                         
+                        char* ip = inet_ntoa(client_addr.sin_addr);
+                        
                         //
                         
-                        SMPPSession* newsession = new SMPPSession(new_sd);
+                        SMPPSession* newsession = new SMPPSession(new_sd,ip);
                         
                         sessionSockMap[new_sd] = newsession;
                         
