@@ -111,6 +111,8 @@ public:
         
         void setSource( uint8_t ton, uint8_t npi, char* addr ) { source_addr_ton = ton; source_addr_npi = npi; strcpy(source_addr,addr); }
         void setDestination( uint8_t ton, uint8_t npi, char* addr ) { dest_addr_ton = ton; dest_addr_npi = npi; strcpy(destination_addr,addr); }
+        void setRegisteredDelivery( uint8_t val ) { registered_delivery = val; }
+        void setShortMessage( uint8_t* sm_in, uint8_t sm_len_in ) { memcpy(short_message, sm_in, sm_len_in); sm_length = sm_len_in; }
         void setSMSCMessageID( char* id ) { smscMessageID = id; }
     };
     
@@ -119,14 +121,65 @@ private:
     typedef map<uint64_t/*time*/,list<Message>> MessageQueue;
     MessageQueue mq;
     
-public:
     MessageDeliverer() {}
+    
+    typedef map<string,MessageDeliverer*> MDMap;
+    static MDMap mapInstance;
+    
+    bool empty(void) { return (mq.size()==0); }
+    
+    bool get( Message& msgout )
+    {
+        if (mq.size()==0) return false; // no time-lists
+        
+        uint64_t firstListTime = (*mq.begin()).first;
+        uint64_t now = currentUSecsSinceEpoch();
+        if ( firstListTime > now ) return false; // nothing due to be deliverered
+        
+        // we have a message (or messages) that are due to be delivered
+        
+        msgout = (*mq.begin()).second.front();
+        
+        (*mq.begin()).second.pop_front(); // remove from list
+        
+        if ((*mq.begin()).second.size()==0) // now empty - remove list
+            mq.erase(mq.begin());
+        
+        return true;
+    }
+    
+public:
     ~MessageDeliverer() {}
     
-    void add(uint64_t timeDeliver, Message msg) {
+    static MessageDeliverer* getInstance(string& systemID)
+    {
+        MDMap::iterator it = mapInstance.find(systemID);
+        if ( it == mapInstance.end() ) {
+            std::pair<MDMap::iterator, bool> res = mapInstance.insert(MDMap::value_type(systemID,new MessageDeliverer));
+            return (res.first)->second;
+        }
+        else return (*it).second;
+    }
+   
+    static bool getInstance_get(string& systemID, Message& msgout)
+    {
+        MDMap::iterator it = mapInstance.find(systemID);
+        if ( it == mapInstance.end() ) {
+            return false;
+        }
+    
+        bool found = (*it).second->get(msgout);
         
-        cout << "Adding " << msg.getContent().c_str() << endl;
+        if ((*it).second->empty()) {
+            delete (*it).second;
+            mapInstance.erase(systemID);
+        }
         
+        return found;
+    }
+    
+    void add(uint64_t timeDeliver, Message msg)
+    {
         MessageQueue::iterator it = mq.find(timeDeliver);
         if ( it == mq.end() ) {
             // no time-list exists - create
@@ -138,32 +191,11 @@ public:
         }
         
         (*it).second.push_back(msg); // add message to time-list
-        
-        std::cout << "Number of time-lists: " << mq.size() << std::endl;
-    }
-    
-    bool get( Message& msgout ) {
-        if (mq.size()==0) return false; // no time-lists
-        
-        uint64_t firstListTime = (*mq.begin()).first;
-        uint64_t now = currentUSecsSinceEpoch();
-        if ( firstListTime > now ) return false; // nothing due to be deliverered
-        
-        // we have a message (or messages) that are due to be delivered
-        
-        msgout = (*mq.begin()).second.front();
-        
-        cout << "Got " << msgout.getContent().c_str() << endl;
-        std::cout << "Number of time-lists: " << mq.size() << std::endl;
-        
-        (*mq.begin()).second.pop_front(); // remove from list
-        
-        if ((*mq.begin()).second.size()==0) // now empty - remove list
-            mq.erase(mq.begin());
-        
-        return true;
     }
 };
+
+MessageDeliverer::MDMap MessageDeliverer::mapInstance;
+
 
 // Sub-SMPP layer
 
@@ -225,6 +257,7 @@ public:
         static const uint64_t ESME_INVDSTADR = 0x0000000B;
         static const uint64_t ESME_RBINDFAIL = 0x0000000D;
         static const uint64_t ESME_RSUBMITFAIL = 0x00000045;
+        static const uint64_t ESME_RINVSCHED = 0x00000061;
     };
     
     class CmdID {
@@ -309,6 +342,58 @@ public:
             if ( cmdStrings[i].cmdid == id ) return cmdStrings[i].name;
         }
         return "";
+    }
+    
+    static void GSMTimeStringShort( time_t& t, char* szTimestamp, int nLen )
+    {
+        if ( t < 0 ) return;
+
+        szTimestamp[0] = 0x00;
+        
+        tm* ptm = gmtime( &t );
+
+        if ( ptm == NULL ) szTimestamp[0] = 0x00;
+        else strftime( szTimestamp, nLen, "%y%m%d%H%M", ptm );
+    }
+    
+    static time_t GSMStringTime( const char* szBuf )
+    {
+        tm atm;
+        int tdif = 0;
+        char chDir = 0;
+        
+        memset( &atm, 0, sizeof( tm ) );
+
+        int nRead = sscanf( szBuf, "%02d%02d%02d%02d%02d%02d%*1d%02d%c",
+            &atm.tm_year, &atm.tm_mon, &atm.tm_mday, &atm.tm_hour, &atm.tm_min, &atm.tm_sec,
+            &tdif, &chDir);
+        
+        time_t t = 0;
+
+        if ( nRead == 5 )
+        {
+            if ( atm.tm_year >= 70 ) atm.tm_year += 1900; else atm.tm_year += 2000;
+
+            t = timegm( &atm );
+
+            if ( t == -1 ) {  // invalid time
+                t = 0;
+            }
+
+            if ( chDir == '+' ) { t = t - (tdif*15*60); }
+            if ( chDir == '-' ) { t = t + (tdif*15*60); }
+        }
+
+        return t;
+    }
+    
+    static time_t GSMRelativeTime( char* szBuf )
+    {
+        time_t t = 0;
+        int mday, hour, min, sec;
+        int nRead = sscanf( szBuf, "%*02d%*02d%02d%02d%02d%02d%*1d%*02d%*c", &mday, &hour, &min, &sec );
+        if ( nRead == 4 ) t = ( ( mday * 24 + hour ) * 60 + min ) * 60 + sec;
+        return t;
     }
 };
 
@@ -553,9 +638,6 @@ private:
     uint64_t enquireLinkRespPending = 0;
     uint64_t closingTime = 0;
     
-    MessageDeliverer md; // message deliverer for session
-        // - simulator implementation point: ESME-to-MS messages only persist during session in which they were submitted (i.e. don't persist between sessions)
-    
 public:
     typedef enum { BS_NONE, BS_TRX, BS_TX, BS_RX } BindState;
     uint8_t version;
@@ -612,7 +694,7 @@ public:
     
     bool timedCheck( void )
     {
-        // return true if to close
+        // return true if session to close
         
         uint64_t now = currentUSecsSinceEpoch();
         
@@ -636,7 +718,7 @@ public:
                 {
                     // waiting on enquire link
                     uint64_t tsinceenquirelinksent = now-enquireLinkRespPending;
-                    if ( tsinceenquirelinksent > (60*1000000L) ) // wait up to 1 min on enquire link response
+                    if ( tsinceenquirelinksent > (60*1000000L) ) // wait up to 1 min on enquire_link response
                     {
                         send(sequence_number_out++, SMPP::CmdID::Unbind, SMPP::CmdStatus::ESME_ROK, NULL, 0);
                         
@@ -646,21 +728,75 @@ public:
             }
         }
         
-        // message delivery + delivery receipt generation
+        // simulate message delivery + delivery receipt generation
         //
         
-        MessageDeliverer::Message msg;
-        while (md.get(msg))
+        if ((system_id.length()>0) && ((bindState == SMPPSession::BindState::BS_TRX)||(bindState == SMPPSession::BindState::BS_RX)))
         {
-            uint8_t source_addr_ton = msg.source_addr_ton, source_addr_npi = msg.source_addr_npi;
-            string destination_addr = msg.destination_addr;
-            uint8_t dest_addr_ton = msg.dest_addr_ton, dest_addr_npi = msg.dest_addr_npi;
-            string source_addr = msg.source_addr;
-            string msgid = msg.smscMessageID;
-            generateReceipt(source_addr_ton,source_addr_npi,source_addr,dest_addr_ton,dest_addr_npi,destination_addr,msgid);
+            MessageDeliverer::Message msg;
+            while (MessageDeliverer::getInstance_get(system_id,msg))
+            {
+                // indicate message delivered
+                
+                if ( msg.registered_delivery != 0 ) // ESME requested receipt so generate one
+                {
+                    uint8_t source_addr_ton = msg.source_addr_ton, source_addr_npi = msg.source_addr_npi;
+                    string destination_addr = msg.destination_addr;
+                    uint8_t dest_addr_ton = msg.dest_addr_ton, dest_addr_npi = msg.dest_addr_npi;
+                    string source_addr = msg.source_addr;
+                    string msgid = msg.smscMessageID;
+                    
+                    generateReceipt(source_addr_ton,source_addr_npi,source_addr,dest_addr_ton,dest_addr_npi,destination_addr,msgid);
+                }
+                
+                if ( strstr(msg.destination_addr,system_id.c_str()) != NULL ) { // system_id is in destination address - assume MO for testing purposes
+                    generateMO(msg.source_addr_ton,msg.source_addr_npi,msg.source_addr,
+                               msg.dest_addr_ton,msg.dest_addr_npi,msg.destination_addr,
+                               msg.short_message,msg.sm_length);
+                }
+            }
         }
         
         return false;
+    }
+    
+    void generateMO(uint8_t source_addr_ton,uint8_t source_addr_npi,string source_addr,
+                    uint8_t dest_addr_ton,uint8_t dest_addr_npi,string destination_addr,
+                    uint8_t* short_message, uint8_t sm_length)
+    {
+        uint8_t sbuf[1024];
+        
+        int sidx=0;
+
+        sbuf[sidx++] = 0x00; // service type
+
+        sbuf[sidx++] = source_addr_ton; //
+        sbuf[sidx++] = source_addr_npi; //
+        memcpy(sbuf+sidx, source_addr.c_str(), source_addr.length()+1); // destination_addr
+        sidx += source_addr.length()+1;
+        
+        sbuf[sidx++] = dest_addr_ton; //
+        sbuf[sidx++] = dest_addr_npi; //
+        memcpy(sbuf+sidx, destination_addr.c_str(), destination_addr.length()+1); // source_addr
+        sidx += destination_addr.length()+1;
+        
+        sbuf[sidx++] = 0x00; // esm_class
+        sbuf[sidx++] = 0x00; // protocol_id
+        sbuf[sidx++] = 0x00; // priority_flag
+        sbuf[sidx++] = 0x00; // schedule_delivery_time
+        sbuf[sidx++] = 0x00; // validity_period
+        sbuf[sidx++] = 0x00; // registered_delivery
+        sbuf[sidx++] = 0x00; // replace_if_present_flag
+        sbuf[sidx++] = 0x00; // data_coding
+        sbuf[sidx++] = 0x00; // sm_default_msg_id
+        
+        sbuf[sidx++] = sm_length; // sm_length
+        
+        memcpy((char*)(sbuf+sidx),short_message,sm_length);
+
+        sidx += sm_length;
+        
+        send(sequence_number_out++,SMPP::CmdID::DeliverSM,SMPP::CmdStatus::ESME_ROK,sbuf,sidx);
     }
     
     void generateReceipt(uint8_t source_addr_ton,uint8_t source_addr_npi,string source_addr,
@@ -669,7 +805,7 @@ public:
     {
         // receipt
         
-        if (bindState == SMPPSession::BindState::BS_TRX) // TODO add support for deliversm and RX bind elsewhere in code
+        if ((bindState == SMPPSession::BindState::BS_TRX)||(bindState == SMPPSession::BindState::BS_RX))
         {
             uint8_t sbuf[1024];
             
@@ -692,30 +828,56 @@ public:
             sbuf[sidx++] = 0x00; // replace_if_present_flag
             sbuf[sidx++] = 0x00; // data_coding
             sbuf[sidx++] = 0x00; // sm_default_msg_id
-            sbuf[sidx++] = 0x00; // sm_length
-            // no short_message
             
-            uint8_t params1[] = {
-                // message_state TLV
-                0x04, 0x27, // tag
-                0x00, 0x01, // length
-                0x02, // value - delivered
-                
-                // network_error TLV
-                0x04, 0x23, // tag
-                0x00, 0x03, // length
-                0x03, 0x00, 0x00, // value - GSM, 0, 0
-                
-                // receipted_message_id TLV
-                0x00, 0x1e, // tag
-                0x00, 0x41, // length
-                // .. message_id (to be appended)
-            };
+            // - short_message containing receipt in text format
+            time_t tSubmitStamp = time(NULL);
+            time_t tDoneStamp = time(NULL);
+            char szSubmitStamp[32];
+            char szDoneStamp[32];
+            SMPP::GSMTimeStringShort( tSubmitStamp, szSubmitStamp, sizeof( szSubmitStamp ) );
+            SMPP::GSMTimeStringShort( tDoneStamp, szDoneStamp, sizeof( szDoneStamp) );
             
-            memcpy(sbuf+sidx,params1,sizeof(params1));
-            sidx += sizeof(params1);
-            memcpy(sbuf+sidx,msgid.c_str(),msgid.length()+1);
-            sidx += msgid.length()+1;
+            char short_message[160];
+            sprintf( short_message, "id:%s sub:000 dlvrd:%03d submit date:%s done date:%s stat:%s err:%03d text:",
+                msgid.c_str(),
+                1 /* 1 message delivered */,
+                szSubmitStamp,
+                szDoneStamp,
+                "DELIVRD",
+                0 /*error*/ );
+            
+            sbuf[sidx++] = strlen(short_message)+1; // sm_length
+            
+            memcpy((char*)(sbuf+sidx),short_message,(int)(strlen(short_message)+1));
+
+            sidx += strlen(short_message)+1;
+            
+            // TLVs
+            
+            if (bindState == SMPPSession::BindState::BS_TRX)
+            {
+                uint8_t params1[] = {
+                    // message_state TLV
+                    0x04, 0x27, // tag
+                    0x00, 0x01, // length
+                    0x02, // value - delivered
+                    
+                    // network_error TLV
+                    0x04, 0x23, // tag
+                    0x00, 0x03, // length
+                    0x03, 0x00, 0x00, // value - GSM, 0, 0
+                    
+                    // receipted_message_id TLV
+                    0x00, 0x1e, // tag
+                    0x00, 0x41, // length
+                    // .. message_id (to be appended)
+                };
+                
+                memcpy(sbuf+sidx,params1,sizeof(params1));
+                sidx += sizeof(params1);
+                memcpy(sbuf+sidx,msgid.c_str(),msgid.length()+1);
+                sidx += msgid.length()+1;
+            }
             
             send(sequence_number_out++,SMPP::CmdID::DeliverSM,SMPP::CmdStatus::ESME_ROK,sbuf,sidx);
         }
@@ -839,6 +1001,10 @@ public:
                 else
                 {
                     // process requested
+
+                    uint64_t tNow = currentUSecsSinceEpoch();
+                    
+                    uint64_t tESMEDeliveryTimeRequired = tNow; // default to immediate delivery
                     
                     bool allowSubmit = true;
                     uint64_t smppSubmitError = SMPP::CmdStatus::ESME_RSUBMITFAIL;
@@ -850,6 +1016,11 @@ public:
                     uint8_t dest_addr_ton = 0;
                     uint8_t dest_addr_npi = 0;
                     string destination_addr = "";
+                    string schedule_delivery_time = "";
+                    string validity_period = "";
+                    uint8_t registered_delivery = 0;
+                    uint8_t sm_length;
+                    uint8_t short_message[160];
                     
                     int ptr_max = 0;
                     uint8_t* ptr = conn.getBodyPointer(ptr_max);
@@ -863,6 +1034,36 @@ public:
                     if (idx<ptr_max) {dest_addr_npi = ptr[idx++];} else { allowSubmit = false; goto parse_complete_submit; }
                     if (!getCOctetString(ptr,ptr_max,idx,destination_addr,21)) { allowSubmit = false; goto parse_complete_submit; }
                     
+                    idx++; // esm_class
+                    idx++; // protocol_id
+                    idx++; // priority_flag
+                    if (!getCOctetString(ptr,ptr_max,idx,schedule_delivery_time,17)) { allowSubmit = false; goto parse_complete_submit; }
+                    if (!getCOctetString(ptr,ptr_max,idx,validity_period,17)) { allowSubmit = false; goto parse_complete_submit; }
+                    registered_delivery = ptr[idx++]; // registered_delivery
+                    idx++; // replace_if_present_flag
+                    idx++; // data_coding
+                    idx++; // sm_default_msg_id
+                    sm_length = ptr[idx++];
+                    memcpy( short_message, ptr+idx, sm_length );
+                    idx += sm_length;
+                    
+                    if (schedule_delivery_time.length()>0) // scheduled delivery
+                    {
+                        if (schedule_delivery_time[schedule_delivery_time.length()-1] == 'R') // relative
+                            tESMEDeliveryTimeRequired = tNow + SMPP::GSMRelativeTime((char*)schedule_delivery_time.c_str())*1000000L;
+                        else
+                            tESMEDeliveryTimeRequired = (SMPP::GSMStringTime(schedule_delivery_time.c_str()) + 3 + (rand()%10))*1000000L;
+                        
+                        if (tESMEDeliveryTimeRequired < tNow) // scheduled delivery time is before now
+                        {
+                            allowSubmit = false;
+                            smppSubmitError = SMPP::CmdStatus::ESME_RINVSCHED;
+                            goto parse_complete_submit;
+                        }
+                    }
+                    
+                    // ...
+                    
                     if (destination_addr == "333") { allowSubmit = false; goto parse_complete_submit; } // force ESME_RSUBMITFAIL
                     
                     if (destination_addr.length()<8) { allowSubmit = false; smppSubmitError = SMPP::CmdStatus::ESME_INVDSTADR; goto parse_complete_submit; }
@@ -873,6 +1074,8 @@ public:
                     
                     if (allowSubmit)
                     {
+                        // accept message and send message ID back to ESME
+                        
                         int msgid_len = 64; // PROTOCOL v3.4 message_id field is COctet String of up to 65 chars (inc NULL terminator)
                         if ( version < 0x34 ) msgid_len = 8; // PROTOCOL v3.3 message_id field is COctet String (hex) of up to 9 characters (inc NULL terminator)
                         
@@ -881,16 +1084,21 @@ public:
                         msgid[msgid_len] = 0;
                         send(seqno,SMPP::CmdID::SubmitSMResp,SMPP::CmdStatus::ESME_ROK,(uint8_t*)msgid,msgid_len+1);
                         
-                        uint64_t timeDeliver = currentUSecsSinceEpoch() + (3+(rand()%10))*1000000L;
+                        // add message to deliverer so that receipt will then be sent to ESME
+                        
+                        uint64_t timeDeliver = tESMEDeliveryTimeRequired + (3+(rand()%10))*1000000L;
+                        
+
+                        
                         MessageDeliverer::Message msg;
                         msg.setSource(source_addr_ton,source_addr_npi,(char*)source_addr.c_str());
                         msg.setDestination(dest_addr_ton,dest_addr_npi,(char*)destination_addr.c_str());
+                        msg.setRegisteredDelivery(registered_delivery);
+                        msg.setShortMessage(short_message, sm_length);
                         msg.setSMSCMessageID(msgid);
-                        md.add(timeDeliver,msg);
-                        
-                        //generateReceipt(source_addr_ton,source_addr_npi,source_addr,dest_addr_ton,dest_addr_npi,destination_addr,msgid);
+                        MessageDeliverer::getInstance(system_id)->add(timeDeliver,msg);
                     }
-                    else send(seqno,SMPP::CmdID::SubmitSMResp, smppSubmitError, NULL, 0);
+                    else send(seqno,SMPP::CmdID::SubmitSMResp, smppSubmitError, NULL, 0); // don't accept message and send NAK back to ESME
                 }
             }
         }
@@ -928,8 +1136,6 @@ public:
     
     bool recv( uint64_t& cmdID, uint64_t& seqNo )
     {
-        //printf("this=%p\n",this);
-        
         bool ret = conn.get();
         if (ret) { cmdID = conn.pduCommandID(); seqNo  = conn.pduSequenceNo();
             logCommand(cmdID,">>");
@@ -1169,7 +1375,7 @@ int main(int argc, const char * argv[])
                         {
                             if (errno != EWOULDBLOCK)
                             {
-                                perror("  accept() failed");
+                                perror("  accept() failed (SMPP)");
                                 if (errno != EMFILE) end_server = TRUE;
                             }
                             break;
@@ -1224,7 +1430,7 @@ int main(int argc, const char * argv[])
                         {
                             if (errno != EWOULDBLOCK)
                             {
-                                perror("  accept() failed");
+                                perror("  accept() failed (admin)");
                                 if (errno != EMFILE) end_server = TRUE;
                             }
                             break;
