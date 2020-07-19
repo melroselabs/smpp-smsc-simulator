@@ -1,0 +1,8 @@
+version: '3.5'
+services:
+  smscsimulator:
+    build: .
+    ports:
+      - "2775:2775"
+      - "8775"
+    command: /bin/sh -c "/app/MLSMSCSimulator"
