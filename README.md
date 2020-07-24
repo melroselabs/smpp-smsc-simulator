@@ -1,7 +1,7 @@
 # SMPP SMSC Simulator
 smpp-smsc-simulator
 
-This code is used as part of the Melrose Labs <a href="https://melroselabs.com/services/smsc-simulator/">SMPP SMSC Simulator</a> service.  The SMSC simulator is used to test an SMS application's support for the <a href="https://smpp.org">SMPP</a> protocol.
+This code was used as part of the Melrose Labs <a href="https://melroselabs.com/services/smsc-simulator/">SMPP SMSC Simulator</a> service.  The SMSC simulator (or SMPP simulator) is used to test an SMS application's support for the <a href="https://smpp.org">SMPP</a> protocol.
 
 Build
 =====
@@ -24,18 +24,18 @@ If you wish to use TLS with the SMSC simulator, then you should put an AWS load 
 Docker
 ===
 
-Alternatively you can build and run simulator in docker
+Alternatively you can build and run the SMSC simulator in docker
 
 ```
 docker-compose up
 ```
 
-This will build and run simulator in docker on port 2775.
+This will build and run the SMSC simulator in Docker on port 2775.
 
 
 References
 ==========
 
-Melrose Labs SMPP SMSC Simulator - https://melroselabs.com/services/smsc-simulator/
+Melrose Labs SMPP SMSC Simulator - https://melroselabs.com/services/smsc-simulator/ (service running newer version of code)
 
 SMPP protocol - https://smpp.org
