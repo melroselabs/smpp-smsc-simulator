@@ -574,7 +574,7 @@ public:
         else {
             // empty body
             command_received_body.valid = true; // empty body (valid)
-            command_received_body.body = NULL;
+            //command_received_body.body = NULL;
             command_received_header.valid = PV_INVALID;
             
             return true;
