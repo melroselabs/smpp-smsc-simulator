@@ -370,7 +370,7 @@ public:
         
         time_t t = 0;
 
-        if ( nRead == 5 )
+        if ( nRead == 8 )
         {
             if ( atm.tm_year >= 70 ) atm.tm_year += 1900; else atm.tm_year += 2000;
 
