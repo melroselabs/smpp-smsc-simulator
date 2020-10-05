@@ -7,7 +7,7 @@ Build
 =====
 
 ```
-g++ smscsimulator.cpp -o MLSMSCSimulator
+g++ -std=c++11 smscsimulator.cpp -o MLSMSCSimulator 
 ```
 
 Run
