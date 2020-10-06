@@ -6,7 +6,7 @@
 //  Copyright © 2019 Melrose Labs. All rights reserved.
 //
 
-// Build: g++ smscsimulator.cpp -o MLSMSCSimulator && ./MLSMSCSimulator
+// Build: g++ -std=c++11 smscsimulator.cpp -o MLSMSCSimulator && ./MLSMSCSimulator
 
 #include <stdio.h>
 #include <stdlib.h>
